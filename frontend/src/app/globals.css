@@ -1,0 +1,102 @@
+@import "tailwindcss";
+
+:root {
+  --background: #0b0b0e;
+  --foreground: #e8e6e1;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-gold-300: #fcd34d;
+  --color-gold-400: #f5c542;
+  --color-gold-500: #d4a017;
+  --color-gold-600: #b8860b;
+  --color-gold-700: #996515;
+  --color-gold-800: #7a5011;
+  --color-card: #111115;
+  --color-card-hover: #1a1a20;
+  --color-border: #1f1f28;
+  --color-border-light: #2c2c38;
+  --color-muted: #7a7a88;
+  --color-success: #4ade80;
+  --color-error: #f87171;
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+}
+
+.aurora-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.aurora-bg .orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(120px);
+}
+
+.aurora-bg .orb-1 {
+  width: 600px;
+  height: 400px;
+  top: -10%;
+  left: 10%;
+  background: radial-gradient(circle, rgba(212, 160, 23, 0.08) 0%, transparent 70%);
+  animation: float1 10s ease-in-out infinite alternate;
+}
+
+.aurora-bg .orb-2 {
+  width: 500px;
+  height: 350px;
+  top: 30%;
+  right: -5%;
+  background: radial-gradient(circle, rgba(184, 134, 11, 0.06) 0%, transparent 70%);
+  animation: float2 13s ease-in-out infinite alternate;
+}
+
+.aurora-bg .orb-3 {
+  width: 450px;
+  height: 300px;
+  bottom: 5%;
+  left: 30%;
+  background: radial-gradient(circle, rgba(245, 197, 66, 0.05) 0%, transparent 70%);
+  animation: float3 11s ease-in-out infinite alternate;
+}
+
+.aurora-bg .orb-4 {
+  width: 350px;
+  height: 250px;
+  top: 50%;
+  left: -5%;
+  background: radial-gradient(circle, rgba(153, 101, 21, 0.07) 0%, transparent 70%);
+  animation: float4 14s ease-in-out infinite alternate;
+}
+
+@keyframes float1 {
+  0% { transform: translate(0, 0) scale(1); }
+  100% { transform: translate(60px, 40px) scale(1.1); }
+}
+
+@keyframes float2 {
+  0% { transform: translate(0, 0) scale(1); }
+  100% { transform: translate(-50px, 30px) scale(1.15); }
+}
+
+@keyframes float3 {
+  0% { transform: translate(0, 0) scale(1); }
+  100% { transform: translate(40px, -50px) scale(1.08); }
+}
+
+@keyframes float4 {
+  0% { transform: translate(0, 0) scale(1); }
+  100% { transform: translate(30px, -30px) scale(1.12); }
+}
