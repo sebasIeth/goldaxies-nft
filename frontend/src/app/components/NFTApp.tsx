@@ -1,11 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import {
-  JsonRpcProvider,
-  BrowserProvider,
-  Contract,
-} from "ethers";
+import { useState, useCallback, useRef } from "react";
+import { JsonRpcProvider, Contract } from "ethers";
+import { XOConnectProvider, XOConnect } from "xo-connect";
 import { Waves, Globe, Search, Zap, Wallet, Languages } from "lucide-react";
 import contractData from "../contract.json";
 
@@ -24,19 +21,14 @@ interface NFTMeta {
   edition?: number;
 }
 
-declare global {
-  interface Window {
-    ethereum?: {
-      request: (args: {
-        method: string;
-        params?: unknown[];
-      }) => Promise<unknown>;
-      on: (event: string, callback: (...args: unknown[]) => void) => void;
-    };
-  }
+interface ConnectedClient {
+  alias: string;
+  image: string;
+  address: string;
 }
 
 const ETH_RPC = "https://ethereum-rpc.publicnode.com";
+const ETH_CHAIN_ID = "0x1";
 const IPFS_GATEWAYS = [
   "https://cloudflare-ipfs.com/ipfs/",
   "https://dweb.link/ipfs/",
@@ -53,50 +45,48 @@ const COLLECTION = {
   contract: contractData.address,
 };
 
-const MOCK_TOKEN_IDS = [1, 2, 3, 4, 5, 6];
-
 const i18n = {
   en: {
     subtitle: "My NFTs · Golden Baboons Mining Club",
-    connectMetaMask: "Connect MetaMask",
+    connectXo: "Connect with XO",
     connecting: "Connecting...",
     disconnect: "Disconnect",
     officialWeb: "Official Website",
     myNfts: "My NFTs",
     loading: "Loading...",
     loadingNfts: "Loading NFTs...",
-    retry: "Retry",
-    demo: "Demo",
-    connectYourWallet: "Connect your wallet",
-    noNftsWallet: "does not hold any GBMC NFTs. Showing sample collection.",
-    wallet: "Wallet",
+    gateTitle: "Connect your XO wallet",
+    gateDesc:
+      "You need to connect with XO Connect to view your NFTs from this collection.",
+    connectError:
+      "Could not connect. Make sure you open this site from the XO wallet browser.",
+    noNfts: "You don't have any GBMC NFTs in this wallet yet.",
     properties: "Properties",
     viewOnOpensea: "View on OpenSea",
     close: "Close",
     enlargeImage: "Enlarge image",
     contract: "Contract",
-    installMetamask: "Install MetaMask to connect your wallet",
   },
   es: {
     subtitle: "Mis NFTs · Golden Baboons Mining Club",
-    connectMetaMask: "Conectar MetaMask",
+    connectXo: "Conectar con XO",
     connecting: "Conectando...",
     disconnect: "Desconectar",
     officialWeb: "Web Oficial",
     myNfts: "Mis NFTs",
     loading: "Cargando...",
     loadingNfts: "Cargando NFTs...",
-    retry: "Reintentar",
-    demo: "Demo",
-    connectYourWallet: "Conecta tu wallet",
-    noNftsWallet: "no tiene NFTs de GBMC. Mostrando coleccion de ejemplo.",
-    wallet: "Wallet",
+    gateTitle: "Conecta tu wallet XO",
+    gateDesc:
+      "Necesitas conectarte con XO Connect para ver tus NFTs de esta colección.",
+    connectError:
+      "No se pudo conectar. Asegúrate de abrir este sitio desde el navegador de la wallet XO.",
+    noNfts: "Aún no tienes NFTs de GBMC en esta wallet.",
     properties: "Propiedades",
     viewOnOpensea: "Ver en OpenSea",
     close: "Cerrar",
     enlargeImage: "Ampliar imagen",
     contract: "Contrato",
-    installMetamask: "Instala MetaMask para conectar tu wallet",
   },
 } as const;
 
@@ -157,12 +147,15 @@ export default function NFTApp() {
   const [loadingMine, setLoadingMine] = useState(false);
   const [selectedNft, setSelectedNft] = useState<NFTMeta | null>(null);
   const [fullImage, setFullImage] = useState<string | null>(null);
-  const [walletAddress, setWalletAddress] = useState<string | null>(null);
-  const [connectingWallet, setConnectingWallet] = useState(false);
-  const [usingMock, setUsingMock] = useState(false);
+  const [client, setClient] = useState<ConnectedClient | null>(null);
+  const [connecting, setConnecting] = useState(false);
+  const [connectError, setConnectError] = useState<string | null>(null);
   const [lang, setLang] = useState<Lang>("en");
   const t = i18n[lang];
 
+  const xoRef = useRef<XOConnectProvider | null>(null);
+
+  // Public read-only provider for querying the collection on-chain
   const provider = new JsonRpcProvider(ETH_RPC);
   const contract = new Contract(
     contractData.address,
@@ -238,32 +231,21 @@ export default function NFTApp() {
 
   // Find which tokens an address owns by scanning the contract
   const findOwnedTokens = useCallback(
-    async (address: string): Promise<number[]> => {
-      try {
-        const balance = await contract.balanceOf(address);
-        const count = Number(balance);
-        if (count === 0) return [];
-
-        // Scan tokens to find owned ones (check in batches)
-        const owned: number[] = [];
-        for (let i = 1; i <= COLLECTION.supply && owned.length < count; i++) {
-          try {
-            const owner = await contract.ownerOf(i);
-            if (owner.toLowerCase() === address.toLowerCase()) {
-              owned.push(i);
-            }
-          } catch {
-            // token might not exist
+    async (address: string, count: number): Promise<number[]> => {
+      const owned: number[] = [];
+      for (let i = 1; i <= COLLECTION.supply && owned.length < count; i++) {
+        try {
+          const owner = await contract.ownerOf(i);
+          if (owner.toLowerCase() === address.toLowerCase()) {
+            owned.push(i);
           }
-          // Don't scan forever — stop after checking 200 tokens
-          // to keep it reasonable
-          if (i > 200 && owned.length === 0) break;
+        } catch {
+          // token might not exist
         }
-        return owned;
-      } catch (e) {
-        console.error("Error finding owned tokens:", e);
-        return [];
+        // Stop early if nothing shows up in the first stretch
+        if (i > 200 && owned.length === 0) break;
       }
+      return owned;
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     []
@@ -273,72 +255,70 @@ export default function NFTApp() {
     async (address: string) => {
       setLoadingMine(true);
       setMyNfts([]);
-      setUsingMock(false);
-
-      // First check balance
       try {
         const balance = await contract.balanceOf(address);
         const count = Number(balance);
-
         if (count > 0) {
-          // Address has NFTs — find them
-          const owned = await findOwnedTokens(address);
+          const owned = await findOwnedTokens(address, count);
           if (owned.length > 0) {
             await loadBatch(owned, setMyNfts);
-            setLoadingMine(false);
-            return;
           }
         }
       } catch (e) {
-        console.error("Error checking balance:", e);
+        console.error("Error loading NFTs:", e);
       }
-
-      // No NFTs found — fall back to mock
-      setUsingMock(true);
-      await loadBatch(MOCK_TOKEN_IDS, setMyNfts);
       setLoadingMine(false);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [loadBatch, findOwnedTokens]
   );
 
-  // Load mock on initial render
-  const loadMock = useCallback(async () => {
-    setLoadingMine(true);
-    setUsingMock(true);
-    await loadBatch(MOCK_TOKEN_IDS, setMyNfts);
-    setLoadingMine(false);
-  }, [loadBatch]);
-
-  useEffect(() => {
-    loadMock();
-  }, [loadMock]);
-
-  async function connectWallet() {
-    if (!window.ethereum) {
-      alert(t.installMetamask);
-      return;
-    }
-
-    setConnectingWallet(true);
+  async function connectXO() {
+    setConnecting(true);
+    setConnectError(null);
     try {
-      const browserProvider = new BrowserProvider(window.ethereum);
-      const signer = await browserProvider.getSigner();
-      const address = await signer.getAddress();
-      setWalletAddress(address);
+      const xo = new XOConnectProvider({
+        rpcs: { [ETH_CHAIN_ID]: ETH_RPC },
+        defaultChainId: ETH_CHAIN_ID,
+      });
+      xoRef.current = xo;
+
+      const accounts = (await xo.request({
+        method: "eth_requestAccounts",
+      })) as string[];
+      const xoClient = await xo.getClient();
+      const address = accounts?.[0];
+
+      if (!address) {
+        throw new Error("No address returned by XO Connect");
+      }
+
+      setClient({
+        alias: xoClient?.alias ?? "",
+        image: xoClient?.image ?? "",
+        address,
+      });
       await loadNFTsForAddress(address);
     } catch (e) {
-      console.error("Error connecting wallet:", e);
+      console.error("Error connecting with XO:", e);
+      setConnectError(t.connectError);
+      xoRef.current = null;
     } finally {
-      setConnectingWallet(false);
+      setConnecting(false);
     }
   }
 
-  function disconnectWallet() {
-    setWalletAddress(null);
-    setUsingMock(true);
+  function disconnect() {
+    try {
+      XOConnect.disconnect();
+    } catch {
+      // ignore
+    }
+    xoRef.current = null;
+    setClient(null);
     setMyNfts([]);
-    loadMock();
+    setSelectedNft(null);
+    setConnectError(null);
   }
 
   return (
@@ -379,30 +359,32 @@ export default function NFTApp() {
               <Languages size={14} />
               {lang === "en" ? "ES" : "EN"}
             </button>
-            {walletAddress ? (
+            {client && (
               <div className="flex items-center gap-3">
                 <div className="flex items-center gap-2 bg-card border border-gold-700/30 px-4 py-2 rounded-lg">
-                  <div className="w-2 h-2 bg-success rounded-full" />
+                  {client.image ? (
+                    <img
+                      src={client.image}
+                      alt={client.alias}
+                      className="w-5 h-5 rounded-full object-cover"
+                    />
+                  ) : (
+                    <div className="w-2 h-2 bg-success rounded-full" />
+                  )}
                   <span className="text-xs text-foreground">
-                    pepito123
+                    {client.alias ||
+                      `${client.address.slice(0, 6)}...${client.address.slice(
+                        -4
+                      )}`}
                   </span>
                 </div>
                 <button
-                  onClick={disconnectWallet}
+                  onClick={disconnect}
                   className="text-xs text-muted hover:text-foreground transition-colors cursor-pointer"
                 >
                   {t.disconnect}
                 </button>
               </div>
-            ) : (
-              <button
-                onClick={connectWallet}
-                disabled={connectingWallet}
-                className="flex items-center gap-2 bg-gradient-to-r from-gold-600 to-gold-700 hover:from-gold-500 hover:to-gold-600 disabled:opacity-50 text-black font-medium px-5 py-2.5 rounded-lg text-sm transition-all cursor-pointer disabled:cursor-not-allowed shadow-md shadow-gold-700/20"
-              >
-                <Wallet size={16} />
-                {connectingWallet ? t.connecting : t.connectMetaMask}
-              </button>
             )}
           </div>
         </div>
@@ -434,67 +416,63 @@ export default function NFTApp() {
           ))}
         </div>
 
-        {/* Mis NFTs */}
-        <section className="bg-card/50 rounded-xl p-6">
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-sm font-medium text-gold-500 uppercase tracking-wider">
-              {t.myNfts}
-            </h2>
-            <div className="flex items-center gap-3">
+        {/* Gate: must connect with XO Connect */}
+        {!client ? (
+          <section className="bg-card/50 rounded-xl p-10 flex flex-col items-center text-center gap-4">
+            <div className="w-14 h-14 rounded-full bg-gold-700/15 border border-gold-700/30 flex items-center justify-center">
+              <Wallet size={24} className="text-gold-500" />
+            </div>
+            <div className="space-y-1">
+              <h2 className="text-lg font-semibold">{t.gateTitle}</h2>
+              <p className="text-sm text-muted max-w-sm">{t.gateDesc}</p>
+            </div>
+            <button
+              onClick={connectXO}
+              disabled={connecting}
+              className="flex items-center gap-2 bg-gradient-to-r from-gold-600 to-gold-700 hover:from-gold-500 hover:to-gold-600 disabled:opacity-50 text-black font-medium px-6 py-3 rounded-lg text-sm transition-all cursor-pointer disabled:cursor-not-allowed shadow-md shadow-gold-700/20"
+            >
+              <Wallet size={16} />
+              {connecting ? t.connecting : t.connectXo}
+            </button>
+            {connectError && (
+              <p className="text-xs text-red-400 max-w-sm">{connectError}</p>
+            )}
+          </section>
+        ) : (
+          /* My NFTs */
+          <section className="bg-card/50 rounded-xl p-6">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-sm font-medium text-gold-500 uppercase tracking-wider">
+                {t.myNfts}
+              </h2>
               {loadingMine && (
                 <span className="text-xs text-gold-500 animate-pulse">
                   {t.loading}
                 </span>
               )}
-              {usingMock && !loadingMine && (
-                <span className="text-xs text-muted">
-                  {t.demo} &middot;{" "}
-                  <button
-                    onClick={connectWallet}
-                    className="text-gold-500 hover:text-gold-300 underline cursor-pointer"
-                  >
-                    {t.connectYourWallet}
-                  </button>
-                </span>
-              )}
             </div>
-          </div>
 
-          {/* No NFTs found with wallet connected */}
-          {walletAddress && usingMock && !loadingMine && (
-            <div className="bg-background border border-border rounded-lg p-4 mb-4">
-              <p className="text-sm text-muted text-center">
-                La wallet{" "}
-                <span className="text-foreground">
-                  {walletAddress.slice(0, 6)}...{walletAddress.slice(-4)}
-                </span>{" "}
-                {t.noNftsWallet}
-              </p>
-            </div>
-          )}
-
-          {myNfts.length > 0 ? (
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-              {myNfts.map((nft) => (
-                <NFTCard
-                  key={nft.tokenId}
-                  nft={nft}
-                  onClick={() => setSelectedNft(nft)}
-                />
-              ))}
-            </div>
-          ) : !loadingMine ? (
-            <div className="text-center py-8">
-              <p className="text-muted text-sm">{t.loadingNfts}</p>
-              <button
-                onClick={loadMock}
-                className="mt-3 bg-gradient-to-r from-gold-600 to-gold-700 hover:from-gold-500 hover:to-gold-600 text-black font-medium px-6 py-2.5 rounded-lg text-sm transition-all cursor-pointer shadow-md shadow-gold-700/20"
-              >
-                {t.retry}
-              </button>
-            </div>
-          ) : null}
-        </section>
+            {myNfts.length > 0 ? (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                {myNfts.map((nft) => (
+                  <NFTCard
+                    key={nft.tokenId}
+                    nft={nft}
+                    onClick={() => setSelectedNft(nft)}
+                  />
+                ))}
+              </div>
+            ) : loadingMine ? (
+              <div className="text-center py-8">
+                <p className="text-muted text-sm">{t.loadingNfts}</p>
+              </div>
+            ) : (
+              <div className="bg-background border border-border rounded-lg p-8 text-center">
+                <p className="text-sm text-muted">{t.noNfts}</p>
+              </div>
+            )}
+          </section>
+        )}
 
         {/* Footer */}
         <footer className="text-center space-y-2 pt-4 pb-8 border-t border-border">
@@ -507,17 +485,6 @@ export default function NFTApp() {
               className="text-gold-500 hover:text-gold-300 transition-colors"
             >
               {COLLECTION.contract}
-            </a>
-          </p>
-          <p className="text-xs text-muted/60">
-            Powered by{" "}
-            <a
-              href="https://goldaxis.com"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-gold-600 hover:text-gold-400 transition-colors"
-            >
-              GoldAxis
             </a>
           </p>
         </footer>
