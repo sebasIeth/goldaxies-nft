@@ -1,9 +1,17 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { JsonRpcProvider, Contract } from "ethers";
-import { XOConnectProvider, XOConnect } from "xo-connect";
-import { Waves, Globe, Search, Zap, Wallet, Languages } from "lucide-react";
+import { XOConnectProvider } from "xo-connect";
+import {
+  Waves,
+  Globe,
+  Search,
+  Zap,
+  Languages,
+  Loader2,
+  ShieldAlert,
+} from "lucide-react";
 import contractData from "../contract.json";
 
 interface NFTAttribute {
@@ -48,18 +56,14 @@ const COLLECTION = {
 const i18n = {
   en: {
     subtitle: "My NFTs · Golden Baboons Mining Club",
-    connectXo: "Connect with XO",
-    connecting: "Connecting...",
-    disconnect: "Disconnect",
+    identifying: "Identifying...",
+    identifyFailedTitle: "We couldn't identify you",
+    identifyFailedDesc:
+      "We couldn't verify your identity, so access to this app is not available right now.",
     officialWeb: "Official Website",
     myNfts: "My NFTs",
     loading: "Loading...",
     loadingNfts: "Loading NFTs...",
-    gateTitle: "Connect your XO wallet",
-    gateDesc:
-      "You need to connect with XO Connect to view your NFTs from this collection.",
-    connectError:
-      "Could not connect. Make sure you open this site from the XO wallet browser.",
     noNfts: "You don't have any GBMC NFTs in this wallet yet.",
     properties: "Properties",
     viewOnOpensea: "View on OpenSea",
@@ -69,18 +73,14 @@ const i18n = {
   },
   es: {
     subtitle: "Mis NFTs · Golden Baboons Mining Club",
-    connectXo: "Conectar con XO",
-    connecting: "Conectando...",
-    disconnect: "Desconectar",
+    identifying: "Identificando...",
+    identifyFailedTitle: "No hemos podido identificarte",
+    identifyFailedDesc:
+      "No pudimos verificar tu identidad, así que el acceso a esta app no está disponible en este momento.",
     officialWeb: "Web Oficial",
     myNfts: "Mis NFTs",
     loading: "Cargando...",
     loadingNfts: "Cargando NFTs...",
-    gateTitle: "Conecta tu wallet XO",
-    gateDesc:
-      "Necesitas conectarte con XO Connect para ver tus NFTs de esta colección.",
-    connectError:
-      "No se pudo conectar. Asegúrate de abrir este sitio desde el navegador de la wallet XO.",
     noNfts: "Aún no tienes NFTs de GBMC en esta wallet.",
     properties: "Propiedades",
     viewOnOpensea: "Ver en OpenSea",
@@ -148,8 +148,7 @@ export default function NFTApp() {
   const [selectedNft, setSelectedNft] = useState<NFTMeta | null>(null);
   const [fullImage, setFullImage] = useState<string | null>(null);
   const [client, setClient] = useState<ConnectedClient | null>(null);
-  const [connecting, setConnecting] = useState(false);
-  const [connectError, setConnectError] = useState<string | null>(null);
+  const [connecting, setConnecting] = useState(true);
   const [lang, setLang] = useState<Lang>("en");
   const t = i18n[lang];
 
@@ -273,9 +272,11 @@ export default function NFTApp() {
     [loadBatch, findOwnedTokens]
   );
 
-  async function connectXO() {
+  // Automatic, invisible identification on load. Runs against the injected
+  // provider (present when the site is opened inside the wallet browser).
+  // No manual button: if it fails, the app shows a blocking notice.
+  const identify = useCallback(async () => {
     setConnecting(true);
-    setConnectError(null);
     try {
       const xo = new XOConnectProvider({
         rpcs: { [ETH_CHAIN_ID]: ETH_RPC },
@@ -290,7 +291,7 @@ export default function NFTApp() {
       const address = accounts?.[0];
 
       if (!address) {
-        throw new Error("No address returned by XO Connect");
+        throw new Error("No address returned by the identity provider");
       }
 
       setClient({
@@ -300,26 +301,17 @@ export default function NFTApp() {
       });
       await loadNFTsForAddress(address);
     } catch (e) {
-      console.error("Error connecting with XO:", e);
-      setConnectError(t.connectError);
+      console.error("Identification failed:", e);
       xoRef.current = null;
+      setClient(null);
     } finally {
       setConnecting(false);
     }
-  }
+  }, [loadNFTsForAddress]);
 
-  function disconnect() {
-    try {
-      XOConnect.disconnect();
-    } catch {
-      // ignore
-    }
-    xoRef.current = null;
-    setClient(null);
-    setMyNfts([]);
-    setSelectedNft(null);
-    setConnectError(null);
-  }
+  useEffect(() => {
+    identify();
+  }, [identify]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -350,7 +342,7 @@ export default function NFTApp() {
             <p className="text-sm text-muted mt-2">{t.subtitle}</p>
           </div>
 
-          {/* Lang toggle + Wallet */}
+          {/* Lang toggle + identity chip */}
           <div className="mt-1 flex items-center gap-4">
             <button
               onClick={() => setLang(lang === "en" ? "es" : "en")}
@@ -360,30 +352,22 @@ export default function NFTApp() {
               {lang === "en" ? "ES" : "EN"}
             </button>
             {client && (
-              <div className="flex items-center gap-3">
-                <div className="flex items-center gap-2 bg-card border border-gold-700/30 px-4 py-2 rounded-lg">
-                  {client.image ? (
-                    <img
-                      src={client.image}
-                      alt={client.alias}
-                      className="w-5 h-5 rounded-full object-cover"
-                    />
-                  ) : (
-                    <div className="w-2 h-2 bg-success rounded-full" />
-                  )}
-                  <span className="text-xs text-foreground">
-                    {client.alias ||
-                      `${client.address.slice(0, 6)}...${client.address.slice(
-                        -4
-                      )}`}
-                  </span>
-                </div>
-                <button
-                  onClick={disconnect}
-                  className="text-xs text-muted hover:text-foreground transition-colors cursor-pointer"
-                >
-                  {t.disconnect}
-                </button>
+              <div className="flex items-center gap-2 bg-card border border-gold-700/30 px-4 py-2 rounded-lg">
+                {client.image ? (
+                  <img
+                    src={client.image}
+                    alt={client.alias}
+                    className="w-5 h-5 rounded-full object-cover"
+                  />
+                ) : (
+                  <div className="w-2 h-2 bg-success rounded-full" />
+                )}
+                <span className="text-xs text-foreground">
+                  {client.alias ||
+                    `${client.address.slice(0, 6)}...${client.address.slice(
+                      -4
+                    )}`}
+                </span>
               </div>
             )}
           </div>
@@ -391,52 +375,54 @@ export default function NFTApp() {
       </header>
 
       <main className="relative z-10 max-w-6xl mx-auto px-4 sm:px-6 py-8 space-y-6">
-        {/* Links */}
-        <div className="flex justify-center gap-3 flex-wrap">
-          {[
-            { label: "OpenSea", href: COLLECTION.opensea, Icon: Waves },
-            { label: t.officialWeb, href: COLLECTION.web, Icon: Globe },
-            {
-              label: "Etherscan",
-              href: `https://etherscan.io/address/${COLLECTION.contract}`,
-              Icon: Search,
-            },
-            { label: "GoldAxis", href: "https://goldaxis.com", Icon: Zap },
-          ].map((l) => (
-            <a
-              key={l.label}
-              href={l.href}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-2 bg-card border border-border hover:border-gold-700/50 px-4 py-2 rounded-lg text-xs text-muted hover:text-gold-400 transition-all"
-            >
-              <l.Icon size={14} />
-              {l.label}
-            </a>
-          ))}
-        </div>
+        {/* Links (only once identified) */}
+        {client && (
+          <div className="flex justify-center gap-3 flex-wrap">
+            {[
+              { label: "OpenSea", href: COLLECTION.opensea, Icon: Waves },
+              { label: t.officialWeb, href: COLLECTION.web, Icon: Globe },
+              {
+                label: "Etherscan",
+                href: `https://etherscan.io/address/${COLLECTION.contract}`,
+                Icon: Search,
+              },
+              { label: "GoldAxis", href: "https://goldaxis.com", Icon: Zap },
+            ].map((l) => (
+              <a
+                key={l.label}
+                href={l.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 bg-card border border-border hover:border-gold-700/50 px-4 py-2 rounded-lg text-xs text-muted hover:text-gold-400 transition-all"
+              >
+                <l.Icon size={14} />
+                {l.label}
+              </a>
+            ))}
+          </div>
+        )}
 
-        {/* Gate: must connect with XO Connect */}
-        {!client ? (
-          <section className="bg-card/50 rounded-xl p-10 flex flex-col items-center text-center gap-4">
-            <div className="w-14 h-14 rounded-full bg-gold-700/15 border border-gold-700/30 flex items-center justify-center">
-              <Wallet size={24} className="text-gold-500" />
+        {/* Automatic identification gate — no manual action */}
+        {connecting ? (
+          <section className="bg-card/50 rounded-xl p-12 flex flex-col items-center text-center gap-4">
+            <Loader2 size={28} className="text-gold-500 animate-spin" />
+            <p className="text-sm text-gold-500 animate-pulse">
+              {t.identifying}
+            </p>
+          </section>
+        ) : !client ? (
+          <section className="bg-card/50 rounded-xl p-12 flex flex-col items-center text-center gap-4">
+            <div className="w-14 h-14 rounded-full bg-red-500/10 border border-red-500/30 flex items-center justify-center">
+              <ShieldAlert size={24} className="text-red-400" />
             </div>
             <div className="space-y-1">
-              <h2 className="text-lg font-semibold">{t.gateTitle}</h2>
-              <p className="text-sm text-muted max-w-sm">{t.gateDesc}</p>
+              <h2 className="text-lg font-semibold">
+                {t.identifyFailedTitle}
+              </h2>
+              <p className="text-sm text-muted max-w-sm">
+                {t.identifyFailedDesc}
+              </p>
             </div>
-            <button
-              onClick={connectXO}
-              disabled={connecting}
-              className="flex items-center gap-2 bg-gradient-to-r from-gold-600 to-gold-700 hover:from-gold-500 hover:to-gold-600 disabled:opacity-50 text-black font-medium px-6 py-3 rounded-lg text-sm transition-all cursor-pointer disabled:cursor-not-allowed shadow-md shadow-gold-700/20"
-            >
-              <Wallet size={16} />
-              {connecting ? t.connecting : t.connectXo}
-            </button>
-            {connectError && (
-              <p className="text-xs text-red-400 max-w-sm">{connectError}</p>
-            )}
           </section>
         ) : (
           /* My NFTs */
@@ -474,20 +460,22 @@ export default function NFTApp() {
           </section>
         )}
 
-        {/* Footer */}
-        <footer className="text-center space-y-2 pt-4 pb-8 border-t border-border">
-          <p className="text-xs text-muted">
-            {t.contract}:{" "}
-            <a
-              href={`https://etherscan.io/address/${COLLECTION.contract}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-gold-500 hover:text-gold-300 transition-colors"
-            >
-              {COLLECTION.contract}
-            </a>
-          </p>
-        </footer>
+        {/* Footer (only once identified) */}
+        {client && (
+          <footer className="text-center space-y-2 pt-4 pb-8 border-t border-border">
+            <p className="text-xs text-muted">
+              {t.contract}:{" "}
+              <a
+                href={`https://etherscan.io/address/${COLLECTION.contract}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-gold-500 hover:text-gold-300 transition-colors"
+              >
+                {COLLECTION.contract}
+              </a>
+            </p>
+          </footer>
+        )}
       </main>
 
       {/* Modal */}
